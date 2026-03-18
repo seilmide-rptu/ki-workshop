@@ -1,6 +1,11 @@
+/*
+* Copyright (c) 2025, RPTU Kaiserslautern-Landau
+* SPDX-License-Identifier: Apache-2.0
+*/
+
 `default_nettype none
 
-module tt_um_vga_example(
+module tt_um_vga_red_car(
     input wire [7:0] ui_in, // Dedizierte Eingänge
     output wire [7:0] uo_out, // Dedizierte Ausgänge
     input wire [7:0] uio_in, // IOs: Eingangs-Pfad
@@ -11,7 +16,7 @@ module tt_um_vga_example(
     input wire rst_n // reset_n - Low = Reset
 );
 
-    // VGA-Signale
+    // VGA-Signale definieren
     wire hsync;
     wire vsync;
     wire [1:0] R;
@@ -21,30 +26,21 @@ module tt_um_vga_example(
     wire [9:0] pix_x;
     wire [9:0] pix_y;
 
-    // Startposition des "Autos"
-    reg [9:0] car_x = 0;
-    reg [9:0] car_y = 200; // Konstante Y-Position für die "Straße"
-    reg moving_left;
-    reg moving_right;
+    // Bewegungssignale und Zähler für die Geschwindigkeit
+    reg [9:0] car_pos_x; // Aktuelle X-Position der linken oberen Ecke des Autos
+    reg [20:0] speed_counter; // Zähler für die Geschwindigkeit
 
-    // Zähler zur Steuerung der Bewegungsgeschwindigkeit
-    reg [24:0] speed_counter;
-
-    // Geschwindigkeitseinstellungen
-    localparam integer TICKS_PER_SECOND = 50_000_000; // Annahme: 50 MHz Takt
-    localparam integer FAST_TOTAL_TICKS = TICKS_PER_SECOND * 3; // Anpassung für 3 Sekunden
-    localparam integer FAST_STEP_TICKS = FAST_TOTAL_TICKS / 640;
-
-    // TinyVGA PMOD
+    // VGA-Ausgänge zuweisen
     assign uo_out = {hsync, B[0], G[0], R[0], vsync, B[1], G[1], R[1]};
 
-    // Ungenutzte Ausgänge werden auf 0 gesetzt
+    // Ungenutzte Ausgänge auf 0 setzen
     assign uio_out = 0;
     assign uio_oe  = 0;
 
-    // Unterdrücken von Warnungen nicht genutzter Signale
+    // Unterdrücke Warnungen für ungenutzte Signale
     wire _unused_ok = &{ena, uio_in};
 
+    // VGA-Signalgenerator-Modul instanziieren
     hvsync_generator hvsync_gen(
         .clk(clk),
         .reset(~rst_n),
@@ -55,58 +51,38 @@ module tt_um_vga_example(
         .vpos(pix_y)
     );
 
-    // Funktion zur Zeichnung des Autos basierend auf Position
-    wire car_body = (pix_x >= car_x + 10 && pix_x < car_x + 60 && pix_y >= car_y + 20 && pix_y < car_y + 40);
-    wire car_top = (pix_x >= car_x + 20 && pix_x < car_x + 50 && pix_y >= car_y + 10 && pix_y < car_y + 20);
-    wire car_wheel1 = (pix_x >= car_x + 15 && pix_x < car_x + 25 && pix_y >= car_y + 40 && pix_y < car_y + 45);
-    wire car_wheel2 = (pix_x >= car_x + 45 && pix_x < car_x + 55 && pix_y >= car_y + 40 && pix_y < car_y + 45);
-
-    // Funktion zur Zeichnung der Straße
-    wire road = (pix_y >= car_y + 46 && pix_y < car_y + 50);
-
-    // Wenn innerhalb der Parameter, wird die Straße in Grau und das Auto in Blau gezeichnet
-    assign R = (video_active && (car_body || car_top || car_wheel1 || car_wheel2)) ? 2'b00 :
-               (video_active && road) ? 2'b01 : 2'b00;
-    assign G = (video_active && (car_body || car_top || car_wheel1 || car_wheel2)) ? 2'b00 :
-               (video_active && road) ? 2'b01 : 2'b00;
-    assign B = (video_active && (car_body || car_top || car_wheel1 || car_wheel2)) ? 2'b11 :
-               (video_active && road) ? 2'b01 : 2'b00;
-
-    always @(posedge clk or negedge rst_n) begin
+    // Steuerung der Autobewegung
+    always @(posedge clk) begin
         if (~rst_n) begin
-            car_x <= 0; // Startposition des Autos
-            speed_counter <= 0;
-            moving_left <= 0;
-            moving_right <= 0;
+            car_pos_x <= 10'd100; // Startposition des Autos
+            speed_counter <= 0; // Zähler zurücksetzen
         end else begin
-            // Bewegungslogik für die linke Richtung
-            if (ui_in[0] == 1'b1) begin
-                moving_left <= 1;
-            end else begin
-                moving_left <= 0;
-            end
+            if (speed_counter == 21'd2_000_000) begin // Beispielwert für langsame Bewegung
+                speed_counter <= 0; // Zähler zurücksetzen
 
-            // Bewegungslogik für die rechte Richtung
-            if (ui_in[1] == 1'b1) begin
-                moving_right <= 1;
+                if (ui_in[0]) // Wenn Pin 0 auf high
+                    car_pos_x <= car_pos_x - 1; // Bewege nach links
+                else if (ui_in[1]) // Wenn Pin 1 auf high
+                    car_pos_x <= car_pos_x + 1; // Bewege nach rechts
             end else begin
-                moving_right <= 0;
-            end
-
-            if (moving_left) begin
-                speed_counter <= speed_counter + 1;
-                if (speed_counter >= FAST_STEP_TICKS) begin
-                    speed_counter <= 0;
-                    if (car_x > 0) car_x <= car_x - 1; // Bewege das Auto nach links
-                end
-            end else if (moving_right) begin
-                speed_counter <= speed_counter + 1;
-                if (speed_counter >= FAST_STEP_TICKS) begin
-                    speed_counter <= 0;
-                    if (car_x < 590) car_x <= car_x + 1; // Bewege das Auto nach rechts
-                end
+                speed_counter <= speed_counter + 1; // Zähler erhöhen
             end
         end
     end
+
+    // Auto und weiße Straße darstellen
+    // Auto besteht aus einem rechteckigen Körper und zwei Rädern
+    wire car_body = (pix_x >= car_pos_x) && (pix_x < car_pos_x + 40) && (pix_y >= 110) && (pix_y < 130);
+    wire car_wheel1 = (pix_x >= car_pos_x + 5) && (pix_x < car_pos_x + 15) && (pix_y >= 130) && (pix_y < 140);
+    wire car_wheel2 = (pix_x >= car_pos_x + 25) && (pix_x < car_pos_x + 35) && (pix_y >= 130) && (pix_y < 140);
+
+    wire road_line = (pix_y >= 145) && (pix_y < 150); // Weiße Linie der Straße
+
+    // Logik, um sicherzustellen, dass das Auto angezeigt wird
+    wire car_on = car_body || car_wheel1 || car_wheel2;
+
+    assign R = video_active ? (car_on ? 2'b11 : (road_line ? 2'b11 : 2'b00)) : 2'b00;
+    assign G = video_active ? (car_on ? 2'b00 : (road_line ? 2'b11 : 2'b00)) : 2'b00;
+    assign B = video_active ? (car_on ? 2'b00 : (road_line ? 2'b11 : 2'b00)) : 2'b00;
 
 endmodule
